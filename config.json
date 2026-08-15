@@ -1,0 +1,21 @@
+{
+  "skin": "default",
+  "pet_size": 163,
+  "frame_interval_ms": 150,
+  "window_pos": [
+    256,
+    844
+  ],
+  "topmost": false,
+  "bg_tolerance": 30,
+  "alpha_threshold": 200,
+  "actions": {
+    "idle": "idle",
+    "left_click": "happy",
+    "left_double": "play",
+    "drag": "drag",
+    "hover": "blink",
+    "right_click": "curious"
+  },
+  "auto_remove_bg": true
+}

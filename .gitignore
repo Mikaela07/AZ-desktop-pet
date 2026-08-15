@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 打包产物
+build/
+dist/
+*.spec
+
+# 桌宠打包成品（体积大，不进仓库；可用 GitHub Releases 单独发布）
+DesktopPet.exe
+*.exe
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+
+# 系统文件
+Thumbs.db
+.DS_Store
