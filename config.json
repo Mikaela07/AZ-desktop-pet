@@ -12,7 +12,7 @@
   "actions": {
     "idle": "idle",
     "left_click": "happy",
-    "left_double": "play",
+    "left_double": "dance",
     "drag": "drag",
     "hover": "blink",
     "right_click": "curious"

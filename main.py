@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 桌面桌宠 MVP —— Python + Tkinter + Pillow
-功能：左键拖动 / 右键设置 / 自定义皮肤 / 自定义动作绑定
+功能：左键拖动 / 右键设置 / 自定义动作绑定 / 开机自启
 作者：仅依赖 Pillow（pip install pillow）
 """
 
@@ -80,7 +80,7 @@ def save_config(cfg):
 
 
 # ============================================================
-# 皮肤系统（自定义GIF/PNG皮肤）
+# 皮肤系统（读取动作帧序列）
 # ============================================================
 class SkinManager:
     """负责按动作名产出帧序列。每帧是固定尺寸的Image，背景为透明色。"""
@@ -94,14 +94,14 @@ class SkinManager:
 
     # -------- 外部接口 --------
     def get_frames(self, skin_name: str, action_name: str):
-        """返回某个皮肤某个动作的帧列表；缺的动作回退到 idle，绝不返回蓝猫。"""
+        """返回某个皮肤某个动作的帧列表；缺的动作回退到 idle。"""
         skin = self._load_skin(skin_name)
         if action_name in skin and skin[action_name]:
             return skin[action_name]
         # 回退到 idle
         if "idle" in skin and skin["idle"]:
             return skin["idle"]
-        # idle 也没有 → 返回空列表（上层会跳过渲染，不会画蓝猫）
+        # idle 也没有 → 返回空列表（上层会跳过渲染）
         return []
 
     def get_frame_durations(self, skin_name: str, action_name: str, n_frames: int):
@@ -118,16 +118,6 @@ class SkinManager:
         # 全都没有 → 用全局 frame_interval_ms 兜底（由调用方传入更合适，这里直接返回 None 表示用全局）
         return None
 
-    def list_skins(self):
-        """返回所有可用皮肤名（default 永远存在，再加 assets/skins 下的目录）"""
-        skins = ["default"]
-        if os.path.isdir(SKINS_DIR):
-            for name in sorted(os.listdir(SKINS_DIR)):
-                path = os.path.join(SKINS_DIR, name)
-                if os.path.isdir(path) and name.lower() != "default":
-                    skins.append(name)
-        return skins
-
     # -------- 内部 --------
     def _load_skin(self, skin_name: str):
         if skin_name in self._cache:
@@ -137,11 +127,6 @@ class SkinManager:
         self._cache[skin_name] = data if data else {}
         return data if data else {}
 
-    def reload(self):
-        self._cache.clear()
-        if hasattr(self, "_dur_cache"):
-            self._dur_cache.clear()
-
     def set_size(self, new_size: int):
         if new_size != self.size:
             self.size = new_size
@@ -149,7 +134,7 @@ class SkinManager:
             if hasattr(self, "_dur_cache"):
                 self._dur_cache.clear()
 
-    # ---------- 从磁盘加载自定义皮肤 ----------
+    # ---------- 从磁盘加载皮肤资源 ----------
     def _load_skin_from_disk(self, skin_name: str):
         """目录结构：assets/skins/<skin_name>/<action_name>/<0.png 1.png ...>
         也支持直接放 <action_name>.gif 作为单文件动画。"""
@@ -764,22 +749,10 @@ class PetApp:
         m.delete(0, tk.END)
         m.add_command(label="🔧 设置", command=self._safe_open_settings)
         m.add_separator()
-        # 快速切换皮肤子菜单
-        sub = tk.Menu(m, tearoff=0)
-        try:
-            skins = self.skin_mgr.list_skins()
-        except Exception:
-            skins = [self.cfg.get("skin", "default")]
-        for skin in skins:
-            mark = "✓ " if skin == self.cfg["skin"] else "  "
-            sub.add_command(label=mark + skin,
-                            command=lambda s=skin: self.switch_skin(s))
-        m.add_cascade(label="🎨 切换皮肤", menu=sub)
-        m.add_separator()
         m.add_command(label="💃 跳舞(10秒)", command=self.manual_dance)
         m.add_command(label="📌 复位位置", command=self.reset_position)
         m.add_separator()
-        # 开机自启开关（boot_var 挂到 self，避免 GC 后开关状态错乱）
+        # 开机自启开关（_autostart_var 挂到 self，避免 GC 后开关状态错乱）
         self._autostart_var = tk.BooleanVar(value=self._is_autostart_enabled())
         m.add_checkbutton(label="🚀 开机自启", variable=self._autostart_var,
                           command=lambda: self.toggle_autostart(self._autostart_var))
@@ -801,26 +774,6 @@ class PetApp:
                 messagebox.showerror("打开设置失败", str(e))
             except Exception:
                 pass
-
-    # ---------- 菜单操作 ----------
-    def switch_skin(self, skin_name):
-        try:
-            self.cfg["skin"] = skin_name
-            self.skin_mgr.reload()
-            save_config(self.cfg)
-            self._rebuild_menu_and_refresh()
-        except Exception as e:
-            print(f"[WARN] 切换皮肤失败: {e}")
-            try:
-                from tkinter import messagebox
-                messagebox.showerror("切换皮肤失败", str(e))
-            except Exception:
-                pass
-
-    # （旧 toggle_topmost 方法已移除：置顶始终开启，不暴露开关）
-    def toggle_topmost(self, var):
-        """保留的占位方法，兼容历史调用。置顶始终开启。"""
-        return
 
     # ---------- 开机自启 ----------
     def _get_autostart_path(self):
@@ -883,13 +836,15 @@ class PetApp:
                 key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
                 if enable:
                     cmd = self._build_autostart_command()
+                    # 使用 winreg.KEY_ALL_ACCESS 获取完整读写权限
                     key = winreg.OpenKey(
-                        winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+                        winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
                     winreg.SetValueEx(key, "DesktopPet", 0, winreg.REG_SZ, cmd)
                     winreg.CloseKey(key)
                 else:
+                    # 删除时同样需要完整权限
                     key = winreg.OpenKey(
-                        winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+                        winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
                     try:
                         winreg.DeleteValue(key, "DesktopPet")
                     except FileNotFoundError:
@@ -968,7 +923,7 @@ X-GNOME-Autostart-enabled=true
                 self.ctx_menu.unpost()
             except Exception:
                 pass
-            self._set_action("play", duration_ms=10000)
+            self._set_action("dance", duration_ms=10000)
         except Exception as e:
             print(f"[WARN] 跳舞失败: {e}")
 
@@ -1011,18 +966,6 @@ class SettingsWindow:
         except Exception:
             self.tmp = json.loads(json.dumps(DEFAULT_CONFIG))
         row = 0
-
-        # --- 皮肤 ---
-        ttk.Label(self.win, text="🎨 皮肤").grid(row=row, column=0, sticky="w", **pad)
-        self.skin_var = tk.StringVar(value=self.tmp["skin"])
-        try:
-            skin_list = app.skin_mgr.list_skins()
-        except Exception:
-            skin_list = [self.tmp.get("skin", "default")]
-        ttk.Combobox(self.win, textvariable=self.skin_var, state="readonly",
-                     values=skin_list, width=16).grid(
-            row=row, column=1, sticky="we", **pad)
-        row += 1
 
         # --- 大小（带实时数值显示）---
         ttk.Label(self.win, text="📐 大小").grid(row=row, column=0, sticky="w", **pad)
@@ -1075,15 +1018,11 @@ class SettingsWindow:
     def apply_and_save(self):
         try:
             a = self.app
-            old_skin = a.cfg["skin"]
-            a.cfg["skin"] = self.skin_var.get() or "default"
             new_size = int(self.size_var.get())
             if a.cfg["pet_size"] != new_size:
                 a.cfg["pet_size"] = new_size
                 a.skin_mgr.set_size(new_size)
                 a._set_geometry()
-            if old_skin != a.cfg["skin"]:
-                a.skin_mgr.reload()
             a.cfg["actions"] = {k: v.get() for k, v in self.action_vars.items()}
             a._action_frame_cache.clear()
             a._build_context_menu()
